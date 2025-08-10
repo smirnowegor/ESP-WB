@@ -22,11 +22,11 @@ logger:
 
 api:
   encryption:
-    key: "WHf/4hgeNd+znV8pBaE+wDX/kcL0F6vGFwnBSC1S9x8="
+    key: "WHf/4hgeNd+znV8pBaE+wDX/kcL0F6vGFwnBSC1S9x8=NNN"
 
 ota:
   platform: esphome
-  password: "19c41f4bb808c3d5b2a76a11a100f70b"
+  password: "19c41f4bb808c3d5b2a76a11a100f70bNNN"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -49,14 +49,27 @@ uart:
 modbus:
   id: modbus_bus
   uart_id: modbus_uart_bus
-  send_wait_time: 50ms
+  # пауза между отправками пакетов на шину (увеличим с 50ms до 200ms)
+  send_wait_time: 200ms
 
 modbus_controller:
   - id: wb_mdm3
     modbus_id: modbus_bus
     address: ${modbus_addr}
-    update_interval: 2s
+    update_interval: 15s
+    command_throttle: 100ms
+    offline_skip_updates: 2
+    max_cmd_retries: 2
     setup_priority: -10
+
+  - id: wb_mdm3_inputs
+    modbus_id: modbus_bus
+    address: ${modbus_addr}
+    update_interval: 500ms   # быстрый опрос только для дискретных входов
+    command_throttle: 100ms
+    offline_skip_updates: 1
+    max_cmd_retries: 2
+    setup_priority: -5
 
 # ----------------------
 # Switches (outputs control via Modbus coils)
