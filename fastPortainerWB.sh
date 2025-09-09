@@ -1,53 +1,37 @@
 #!/bin/bash
 set -e
 
-echo "Начинаем установку Portainer..."
+BIG_DISK="/mnt/data"
+PORTAINER_DIR="$BIG_DISK/udobnidom/portainer"
 
-# Запрос порта у пользователя
+echo "=== Установка Portainer на большой раздел ==="
+
+# Проверка, где хранит данные Docker
+DOCKER_ROOT=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo "")
+if [[ -n "$DOCKER_ROOT" && "$DOCKER_ROOT" != "$BIG_DISK"* ]]; then
+    echo "[WARN] Docker хранит образы в $DOCKER_ROOT (rootfs)."
+    echo "       Образ Portainer (~250МБ) займёт место на маленьком разделе!"
+    echo "       Рекомендуется перенести Docker data-root на $BIG_DISK."
+fi
+
+# Запрос порта
 DEFAULT_PORT="9000"
 read -p "Введите порт для Portainer UI (по умолчанию: ${DEFAULT_PORT}): " USER_PORT
-
-# Если пользователь ничего не ввёл, используем порт по умолчанию
-if [ -z "$USER_PORT" ]; then
-    PORT_TO_USE="${DEFAULT_PORT}"
-else
-    PORT_TO_USE="${USER_PORT}"
-fi
+PORT_TO_USE="${USER_PORT:-$DEFAULT_PORT}"
 echo "Portainer UI будет доступен на порту: ${PORT_TO_USE}"
 
-# Очистка предыдущих установок Portainer (если есть)
-echo "Проверяем и удаляем предыдущие установки Portainer..."
-if sudo docker ps -a --format '{{.Names}}' | grep -q "^portainer$"; then
-    echo "Обнаружен существующий контейнер Portainer. Останавливаем и удаляем его..."
-    sudo docker stop portainer
-    sudo docker rm portainer
-else
-    echo "Контейнер Portainer не найден или не запущен."
-fi
+# Очистка старой установки
+echo "Очищаю предыдущую установку Portainer..."
+docker rm -f portainer 2>/dev/null || true
+docker rmi portainer/portainer-ce:latest 2>/dev/null || true
+rm -rf "$PORTAINER_DIR"
 
-# Удаляем образы Portainer
-if sudo docker images --format '{{.Repository}}' | grep -q "^portainer/portainer-ce$"; then
-    echo "Обнаружен образ Portainer. Удаляем его..."
-    sudo docker rmi portainer/portainer-ce:latest || true
-else
-    echo "Образ Portainer не найден."
-fi
+# Создание структуры
+mkdir -p "$PORTAINER_DIR/data"
 
-# Удаляем директории Portainer
-echo "Удаляем директории и файлы предыдущих установок Portainer..."
-sudo rm -rf /mnt/data/udobnidom/portainer/data
-sudo rm -rf /mnt/data/udobnidom/portainer/compose.yaml
-echo "Предыдущие установки Portainer очищены."
-
-# Создание новой установки Portainer
-echo "Создаём необходимые директории для новой установки..."
-sudo mkdir -p /mnt/data/udobnidom/portainer/data
-
-# Создаём файл docker-compose.yaml для Portainer
-echo "Создаём файл compose.yaml для Portainer..."
-cat <<EOL | sudo tee /mnt/data/udobnidom/portainer/compose.yaml > /dev/null
+# Создание compose.yaml
+cat > "$PORTAINER_DIR/compose.yaml" <<EOL
 version: '3.8'
-
 services:
   portainer:
     container_name: portainer
@@ -59,36 +43,19 @@ services:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /mnt/data/udobnidom/portainer/data:/data
+      - $PORTAINER_DIR/data:/data
 EOL
 
-# Переходим в директорию Portainer и запускаем контейнер
-echo "Переходим в директорию /mnt/data/udobnidom/portainer/ и запускаем Portainer..."
-cd /mnt/data/udobnidom/portainer/
-sudo docker compose up -d
+# Запуск
+cd "$PORTAINER_DIR"
+docker compose up -d
 
-echo "Portainer успешно установлен и запускается!"
-
-# Вывод ссылки для доступа к Portainer
-echo ""
-echo "---------------------------------------------------------"
-echo "Для доступа к Portainer перейдите по следующей ссылке:"
-echo ""
+# Вывод ссылки
 SERVER_IP=$(hostname -I | awk '{print $1}')
-if [ -z "$SERVER_IP" ]; then
-    SERVER_IP=$(ip addr show | grep -oP 'inet \K[\d.]+' | grep -v '127.0.0.1' | head -1)
-fi
-if [ -z "$SERVER_IP" ]; then
-    echo "Не удалось автоматически определить IP-адрес. Попробуйте найти его вручную командой 'ip a' или 'ifconfig'."
-    echo "По умолчанию будет использоваться localhost, но это может быть некорректно для внешнего доступа."
-    SERVER_IP="localhost"
-fi
-echo "   http://${SERVER_IP}:${PORT_TO_USE}/"
 echo ""
 echo "---------------------------------------------------------"
-echo "При первом входе вам нужно будет создать учётную запись администратора."
-echo ""
-
-# Возвращаемся в домашнюю директорию пользователя
-cd ~
-echo "Скрипт завершён. Вы вернулись в домашнюю директорию."
+echo "Portainer запущен!"
+echo "Адрес: http://${SERVER_IP}:${PORT_TO_USE}/"
+echo "При первом входе создайте учётную запись администратора."
+echo "Данные Portainer: $PORTAINER_DIR/data"
+echo "---------------------------------------------------------"
