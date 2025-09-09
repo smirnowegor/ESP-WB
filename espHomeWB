@@ -1,13 +1,30 @@
 version: "3.8"
 
 services:
-  esphome:
-    image: ghcr.io/esphome/esphome:stable
-    container_name: esphome
-    restart: unless-stopped
+  # Одноразовый init: создаст папки и выставит права в /mnt/data/udobnidom
+  setup_esphome:
+    image: alpine:3.18
+    container_name: setup_esphome
+    restart: "no"
+    network_mode: host
+    volumes:
+      - /mnt/data:/mnt/data
+    command: /bin/sh -c "\
+      set -eux; \
+      mkdir -p /mnt/data/udobnidom/esphome/{config,build,cache,data,tmp,.platformio}; \
+      mkdir -p /mnt/data/udobnidom/esphome2wb; \
+      rm -rf /mnt/data/udobnidom/esphome/.platformio/packages/* || true; \
+      chown -R 0:0 /mnt/data/udobnidom/esphome /mnt/data/udobnidom/esphome2wb || true; \
+      chmod -R 0777 /mnt/data/udobnidom/esphome /mnt/data/udobnidom/esphome2wb || true; \
+      echo done > /mnt/data/udobnidom/esphome/.init_done; \
+      exit 0"
 
-    # Сеть и привилегии
-    network_mode: "host"
+  # ESPHome container — все временные каталоги и .platformio на /mnt/data
+  esphome:
+    container_name: esphome
+    image: ghcr.io/esphome/esphome:stable
+    restart: unless-stopped
+    network_mode: host
     privileged: true
     cap_add:
       - NET_ADMIN
@@ -19,40 +36,28 @@ services:
       - seccomp:unconfined
       - apparmor:unconfined
 
-    # Доступ к физическим устройствам (serial/usb и т.д.)
-    # Это даёт контейнеру доступ ко всем устройствам хоста. При желании можно заменить /dev:/dev
-    # на конкретные устройства, например: - "/dev/ttyUSB0:/dev/ttyUSB0"
     devices:
-      - "/dev:/dev"
+      - "/dev:/dev"                # полный доступ к устройствам хоста (при желании заменить конкретными tty)
       - "/dev/ttyUSB0:/dev/ttyUSB0"
       - "/dev/ttyACM0:/dev/ttyACM0"
 
-    # Персистентность и перенаправление временных/кэш директорий на большой раздел
     volumes:
-      - /mnt/data/docker/esphome/config:/config
-      - /mnt/data/docker/esphome/build:/build
-      - /mnt/data/docker/esphome/cache:/cache
-      - /mnt/data/docker/esphome/data:/data
-      - /mnt/data/docker/esphome/tmp:/tmp
+      - /mnt/data/udobnidom/esphome/config:/config
+      - /mnt/data/udobnidom/esphome/build:/build
+      - /mnt/data/udobnidom/esphome/cache:/cache
+      - /mnt/data/udobnidom/esphome/data:/data
+      - /mnt/data/udobnidom/esphome/tmp:/tmp
+      - /mnt/data/udobnidom/esphome/.platformio:/root/.platformio
       - /etc/localtime:/etc/localtime:ro
 
-    # Порты (при network_mode: host не используются, но оставлены для наглядности)
-    ports:
-      - "6052:6052"
-      - "6053:6053"
-      - "80:80"
-      - "443:443"
-      - "8080:8080"
-      - "3232:3232"
-
     environment:
-      - USERNAME=admin
-      - PASSWORD=very-secret-password
       - ESPHOME_BUILD_PATH=/build
       - ESPHOME_DATA_DIR=/data
-      - PLATFORMIO_CORE_DIR=/cache/pio
+      - PLATFORMIO_CORE_DIR=/root/.platformio
       - PIP_CACHE_DIR=/cache/pip
       - PLATFORMIO_DISABLE_PROGRESSBAR=true
+      - MQTT_BROKER=localhost
+      - MQTT_PREFIX=esphome/${name}
 
     ulimits:
       nofile:
@@ -65,3 +70,24 @@ services:
       interval: 1m
       timeout: 10s
       retries: 3
+
+    depends_on:
+      - setup_esphome
+
+  # Конвертер MQTT -> виртуальные устройства Wiren Board (esphome2wb)
+  esphome2wb:
+    container_name: esphome2wb
+    image: node:18-slim
+    restart: unless-stopped
+    network_mode: host
+    working_dir: /usr/src/app
+    volumes:
+      - /mnt/data/udobnidom/esphome2wb:/usr/src/app
+    # При старте установит зависимости, если их нет, затем запустит скрипт
+    command: /bin/sh -c "if [ ! -d node_modules ]; then npm ci --only=production || npm i --production; fi && node esphome2wb.js"
+    depends_on:
+      - setup_esphome
+      - esphome
+    environment:
+      - MQTT_BROKER=localhost
+      - MQTT_PORT=1883
