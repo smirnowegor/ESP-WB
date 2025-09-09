@@ -74,20 +74,4 @@ services:
     depends_on:
       - setup_esphome
 
-  # Конвертер MQTT -> виртуальные устройства Wiren Board (esphome2wb)
-  esphome2wb:
-    container_name: esphome2wb
-    image: node:18-slim
-    restart: unless-stopped
-    network_mode: host
-    working_dir: /usr/src/app
-    volumes:
-      - /mnt/data/udobnidom/esphome2wb:/usr/src/app
-    # При старте установит зависимости, если их нет, затем запустит скрипт
-    command: /bin/sh -c "if [ ! -d node_modules ]; then npm ci --only=production || npm i --production; fi && node esphome2wb.js"
-    depends_on:
-      - setup_esphome
-      - esphome
-    environment:
-      - MQTT_BROKER=localhost
-      - MQTT_PORT=1883
+
