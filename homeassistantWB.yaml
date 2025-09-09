@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  setup_homeassistant:
+    image: alpine:3.18
+    container_name: setup_homeassistant
+    restart: "no"
+    network_mode: host
+    volumes:
+      - /mnt/data:/mnt/data
+    command: >
+      /bin/sh -c "set -eux;
+      mkdir -p /mnt/data/udobnidom/homeassistant/config;
+      mkdir -p /mnt/data/udobnidom/homeassistant/ssl || true;
+      chown -R 0:0 /mnt/data/udobnidom/homeassistant || true;
+      chmod -R 0755 /mnt/data/udobnidom/homeassistant || true;
+      echo done > /mnt/data/udobnidom/homeassistant/.init_done;
+      exit 0"
+
+  homeassistant:
+    container_name: homeassistant
+    image: homeassistant/home-assistant:latest
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    depends_on:
+      - setup_homeassistant
+    volumes:
+      - /mnt/data/udobnidom/homeassistant/config:/config
+      - /mnt/data/udobnidom/homeassistant/ssl:/ssl
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /dev/shm:/dev/shm
