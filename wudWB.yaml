@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  wud:
+    image: getwud/wud:latest
+    container_name: wud
+    ports:
+      - "3006:3000"  # внешний порт 3006, внутренний 3000 у WUD
+    environment:
+      WUD_TRIGGER_MQTT_MOSQUITTO_URL: "mqtt://localhost:1883"  # подключение к Mosquitto на хосте
+      WUD_TRIGGER_MQTT_MOSQUITTO_HASS_ENABLED: "true"
+      WUD_TRIGGER_MQTT_MOSQUITTO_HASS_DISCOVERY: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro  # контейнер использует системный часовой пояс
+    networks:
+      - homeiot_internal
+    restart: unless-stopped
+
+networks:
+  homeiot_internal:
+    driver: bridge
