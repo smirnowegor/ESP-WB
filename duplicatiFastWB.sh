@@ -173,7 +173,6 @@ if [ -z "$BIN_PATH" ]; then
 fi
 if [ -z "$BIN_PATH" ]; then
   echo "Внимание: duplicati-server не найден после установки. Проверьте пакет." >&2
-  # не выходим — создадим unit с дефолтным путём; systemd покажет ошибку
   BIN_PATH="/usr/bin/duplicati-server"
 fi
 echo "Использую бинарь: $BIN_PATH"
@@ -181,19 +180,16 @@ echo "Использую бинарь: $BIN_PATH"
 # 10) Проверка/генерация ENC_KEY (>=8)
 if [ "${#ENC_KEY}" -lt 8 ]; then
   echo "Введённый ключ короткий (${#ENC_KEY}) — генерирую безопасный ключ (hex, 64 символа)..."
-  # openssl может отсутствовать — fallback к /dev/urandom
   if command -v openssl >/dev/null 2>&1; then
     ENC_KEY=$(openssl rand -hex 32)
   else
-    # 32 bytes -> 64 hex chars
     ENC_KEY=$(xxd -p -l 32 /dev/urandom 2>/dev/null || head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-    # если всё равно коротко — pad
     [ "${#ENC_KEY}" -lt 8 ] && ENC_KEY="$(date +%s)-generated-key-$(head -c16 /dev/urandom | tr -dc 'a-f0-9' | head -c24)"
   fi
   echo "Сгенерированный ключ будет сохранён и использован."
 fi
 
-# 11) Сохраняем пароли в защищённый env-файл (shell-экранируем одинарные кавычки)
+# 11) Сохраняем пароли в защищённый env-файл
 escape_for_single_quotes() {
   printf "%s" "$1" | sed "s/'/'\"'\"'/g"
 }
@@ -240,17 +236,20 @@ $SUDO systemctl restart duplicati.service || {
   $SUDO journalctl -u duplicati.service -n 200 --no-pager || true
 }
 
-# 14) Результат
+# 14) Результат — теперь выводим реальные значения паролей в терминал
 echo -e "\n===== Установка завершена (или запущена попытка) ====="
 echo "Доступно по адресам (порт 8200):"
 ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+\.\d+\.\d+\.\d+' | while read -r ip; do
   echo "  http://${ip}:8200"
 done
-echo -e "\nИспользованные пароли/ключ (сохранил в ${ENV_FILE}):"
-echo "  • Веб-пароль:      (в файле WEB_PASS)"
-echo "  • Ключ шифрования: (в файле ENC_KEY)"
+
+echo -e "\nИспользованные пароли/ключ (сохранены в ${ENV_FILE}):"
+# показываем реальные значения чтобы ты мог их сразу увидеть и сохранить
+printf "  • Веб-пароль:         %s\n" "$WEB_PASS"
+printf "  • Ключ шифрования:    %s\n" "$ENC_KEY"
+
 echo -e "\nФайлы скачаны в: ${FPATH}"
 echo "Рабочая папка Duplicati: ${WORK_DIR}"
 
-# 15) Подсказка: если нужно вернуть старые репозитории — удалите ${TEMP_SOURCES}"
+# Подсказка: если нужно вернуть старые репозитории — удалите ${TEMP_SOURCES}"
 exit 0
