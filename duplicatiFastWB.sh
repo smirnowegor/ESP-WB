@@ -1,213 +1,175 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Настройки ---
+# ---------------- CONFIG ----------------
 TAG="v2.1.1.101_canary_2025-08-19"
 GITHUB_BASE="https://github.com/duplicati/duplicati/releases/download"
 
-DOWNLOAD_DIR="/mnt/data/udobnidom"
+# ✨ ИЗМЕНЕНИЕ: Явно указываем все пути в разделе /mnt/data, как ты и просил.
+DOWNLOAD_DIR="/mnt/data/duplicati-downloads"
 WORK_DIR="/mnt/data/duplicati"
 ENV_FILE="${WORK_DIR}/duplicati.env"
-mkdir -p "$DOWNLOAD_DIR" "$WORK_DIR"
+BACKUP_DIR="/mnt/data/duplicati-backups-$(date +%s)"
+# ----------------------------------------
+
+# --- Создание рабочих каталогов ---
+mkdir -p "$DOWNLOAD_DIR" "$WORK_DIR" "$BACKUP_DIR"
 chmod 700 "$WORK_DIR"
 
-declare -A CANDIDATES
-CANDIDATES["x86_64"]="linux-x64-cli.deb linux-x64-agent.deb linux-x64-gui.deb"
-CANDIDATES["aarch64"]="linux-arm64-cli.deb linux-arm64-agent.deb linux-arm64-gui.deb"
-CANDIDATES["armv7l"]="linux-arm7-cli.deb linux-arm7-agent.deb linux-arm7-gui.deb"
-
+# --- Проверка прав и подготовка SUDO ---
 SUDO=""
 if [ "$EUID" -ne 0 ]; then
   if command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
   else
-    echo "Требуются права root или sudo, но sudo не найден." >&2
+    echo "Ошибка: Требуются права root или команда sudo." >&2
     exit 1
   fi
 fi
 
-# 1) Запрос паролей
+# --- Определение временного файла для репозиториев и его автоочистка ---
+TEMP_SOURCES="/tmp/99-duplicati-temp-debian.list"
+# Убедимся, что файл точно будет удален при выходе
+trap '$SUDO rm -f "$TEMP_SOURCES"' EXIT
+
+# --- Ввод паролей ---
 read -rsp "Введите пароль для веб-интерфейса Duplicati: " WEB_PASS; echo
 read -rsp "Введите ключ шифрования настроек (минимум 8 символов, если короче будет сгенерирован): " ENC_KEY; echo
 
-# 2) Определение ОС/архитектуры
+# --- Простые проверки системы ---
 OS_NAME=$(uname -s)
 ARCH=$(uname -m)
 echo "Определена ОС: ${OS_NAME}, Архитектура: ${ARCH}"
-
 if [ "$OS_NAME" != "Linux" ]; then
-  echo "Скрипт поддерживает только Linux (Armbian/Debian/Ubuntu)." >&2
+  echo "Ошибка: Скрипт поддерживает только Linux." >&2
   exit 1
 fi
-
 case "$ARCH" in
   aarch64|arm64) ARCH_KEY="aarch64" ;;
   armv7l|armhf|armv7*) ARCH_KEY="armv7l" ;;
   x86_64|amd64) ARCH_KEY="x86_64" ;;
-  *) echo "Неизвестная/неподдерживаемая архитектура: $ARCH" >&2; exit 1 ;;
+  *) echo "Ошибка: Неизвестная/неподдерживаемая архитектура: $ARCH" >&2; exit 1 ;;
 esac
 
-# 3) Очистка предыдущих установок (systemd, пакеты, конфиги, старые deb в /mnt/data)
-echo "Останавливаю и удаляю предыдущие установки Duplicati..."
+# --- Ассоциативный массив с кандидатами для скачивания ---
+declare -A CANDIDATES
+CANDIDATES["x86_64"]="linux-x64-gui.deb"
+CANDIDATES["aarch64"]="linux-arm64-gui.deb"
+CANDIDATES["armv7l"]="linux-arm7-gui.deb"
+
+# --- Остановка и резервное копирование старого сервиса ---
+SERVICE_PATH="/etc/systemd/system/duplicati.service"
+echo "Останавливаю и отключаю duplicati.service..."
 $SUDO systemctl stop duplicati.service 2>/dev/null || true
 $SUDO systemctl disable duplicati.service 2>/dev/null || true
-$SUDO rm -f /etc/systemd/system/duplicati.service
+[ -f "$SERVICE_PATH" ] && $SUDO cp -a "$SERVICE_PATH" "${BACKUP_DIR}/duplicati.service.bak"
+[ -f "$ENV_FILE" ] && $SUDO cp -a "$ENV_FILE" "${BACKUP_DIR}/duplicati.env.bak"
 
+# --- Полная чистка старых установок ---
+echo "Удаляю возможные старые артефакты пакета и конфигов..."
+$SUDO rm -f /etc/systemd/system/duplicati.service
 if command -v dpkg >/dev/null 2>&1; then
   to_remove=$(dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -E '^duplicati' || true)
   if [ -n "$to_remove" ]; then
     echo "Удаляю пакеты: $to_remove"
-    $SUDO apt-get remove --purge -y $to_remove || true
+    $SUDO apt-get remove --purge -y $to_remove
   fi
 fi
+$SUDO rm -rf /root/.config/Duplicati /etc/duplicati /var/lib/duplicati
+$SUDO rm -f "${DOWNLOAD_DIR}"/*.deb
+echo "Очищаю рабочий каталог ${WORK_DIR} от старой базы данных..."
+$SUDO rm -f "${WORK_DIR}"/*.sqlite*
 
-$SUDO rm -rf /root/.config/Duplicati /etc/duplicati /var/lib/duplicati || true
-$SUDO rm -f "${DOWNLOAD_DIR}"/*.deb || true
-
-# 4) Временное добавление рабочих репозиториев (если нужно)
-CODENAME="bullseye"
-if [ -r /etc/os-release ]; then
-  codename_tmp=$(awk -F= '/VERSION_CODENAME/ {print $2}' /etc/os-release | tr -d '"')
-  if [ -n "$codename_tmp" ]; then
-    CODENAME="$codename_tmp"
-  fi
-fi
-TEMP_SOURCES="/etc/apt/sources.list.d/99-temporary-official-debian.list"
-echo "Добавляю временные репозитории deb.debian.org ($CODENAME) -> $TEMP_SOURCES"
-$SUDO tee "$TEMP_SOURCES" > /dev/null <<EOF
-deb http://deb.debian.org/debian ${CODENAME} main contrib non-free
-deb http://deb.debian.org/debian ${CODENAME}-updates main contrib non-free
-deb http://security.debian.org/debian-security ${CODENAME}-security main contrib non-free
+# --- ✨ ИЗМЕНЕНИЕ: Изолированная установка зависимостей ---
+# Этот блок теперь полностью автономен и не трогает системные репозитории Wiren Board.
+echo "Начинаю изолированную установку зависимостей..."
+CODENAME=$(grep -oP 'VERSION_CODENAME=\K\w+' /etc/os-release || echo "bullseye")
+$SUDO tee "$TEMP_SOURCES" >/dev/null <<EOF
+deb http://deb.debian.org/debian ${CODENAME} main
+deb http://deb.debian.org/debian ${CODENAME}-updates main
+deb http://security.debian.org/debian-security ${CODENAME}-security main
 EOF
 
-# 5) Установка минимальных зависимостей
-echo "Обновляю индексы и устанавливаю базовые зависимости..."
-if command -v apt-get >/dev/null 2>&1; then
-  $SUDO apt-get update -y || true
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wget unzip ca-certificates libicu-dev || true
-elif command -v dnf >/dev/null 2>&1; then
-  $SUDO dnf install -y wget unzip ca-certificates libicu || true
-else
-  echo "Пакетный менеджер не поддерживается автоматически. Установите wget и libicu вручную." >&2
-fi
+echo "Обновляю список пакетов ТОЛЬКО из временного репозитория..."
+# Команды apt-get теперь используют опции -o, чтобы работать только с нашим временным файлом.
+$SUDO apt-get update \
+  -o Dir::Etc::SourceList="$TEMP_SOURCES" \
+  -o Dir::Etc::SourceParts="/dev/null"
 
-# 6) Поиск подходящего .deb
+echo "Устанавливаю wget, unzip, ca-certificates, libicu-dev..."
+# ✨ ИЗМЕНЕНИЕ: Используется "пуленепробиваемый" синтаксис для выполнения команды.
+$SUDO bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends \
+  -o Dir::Etc::SourceList=\"$TEMP_SOURCES\" \
+  -o Dir::Etc::SourceParts=\"/dev/null\" \
+  wget unzip ca-certificates libicu-dev"
+echo "Изолированная установка зависимостей завершена."
+# Временный файл $TEMP_SOURCES будет автоматически удален в конце скрипта.
+
+# --- Подбор и скачивание .deb пакета ---
 VERSION="${TAG#v}"
 FOUND_URL=""
-FOUND_FNAME=""
-if [ -z "${CANDIDATES[$ARCH_KEY]:-}" ]; then
-  echo "Нет списка пакетов для архитектуры ${ARCH_KEY}" >&2
-  exit 1
-fi
-
+FNAME=""
 for suffix in ${CANDIDATES[$ARCH_KEY]}; do
   FNAME="duplicati-${VERSION}-${suffix}"
   URL="${GITHUB_BASE}/${TAG}/${FNAME}"
-  echo -n "Проверяю: ${URL} ... "
-  if command -v curl >/dev/null 2>&1; then
-    code=$(curl -s -L -I -o /dev/null -w '%{http_code}' "$URL" || echo "000")
-    if [ "$code" = "200" ]; then
-      echo "OK"
-      FOUND_URL="$URL"
-      FOUND_FNAME="$FNAME"
-      break
-    else
-      echo "нет ($code)"
-    fi
+  echo -n "Проверяю доступность: ${FNAME} ... "
+  if curl --output /dev/null --silent --head --fail -L "$URL"; then
+    echo "OK"
+    FOUND_URL="$URL"
+    break
   else
-    if wget --spider --timeout=10 --tries=1 "$URL" 2>&1 | grep -q "200 OK"; then
-      echo "OK"
-      FOUND_URL="$URL"
-      FOUND_FNAME="$FNAME"
-      break
-    else
-      echo "нет"
-    fi
+    echo "нет"
   fi
 done
 
 if [ -z "$FOUND_URL" ]; then
-  echo "Не найдено .deb для релиза ${TAG} и архитектуры ${ARCH}. Посмотрите релиз вручную:" >&2
-  echo "  https://github.com/duplicati/duplicati/releases/tag/${TAG}"
+  echo "Ошибка: Не найден подходящий .deb пакет для ${TAG}/${ARCH_KEY}." >&2
   exit 1
 fi
 
-# 7) Скачивание .deb
-FPATH="${DOWNLOAD_DIR}/${FOUND_FNAME}"
-echo "Скачиваю ${FOUND_FNAME} в ${FPATH} ..."
-$SUDO rm -f "$FPATH" || true
-if ! wget --progress=bar:force -O "$FPATH" "$FOUND_URL"; then
-  echo "Ошибка при скачивании ${FOUND_URL}" >&2
-  exit 1
-fi
-$SUDO chown root:root "$FPATH"
-$SUDO chmod 644 "$FPATH"
+FPATH="${DOWNLOAD_DIR}/${FNAME}"
+echo "Скачиваю ${FNAME} -> ${FPATH}..."
+$SUDO rm -f "$FPATH"
+wget --progress=bar:force -O "$FPATH" "$FOUND_URL"
+$SUDO chown root:root "$FPATH"; $SUDO chmod 644 "$FPATH"
 
-# 8) Установка .deb (dpkg + apt-get -f)
-echo "Устанавливаю пакет ${FOUND_FNAME} ..."
-if command -v apt-get >/dev/null 2>&1; then
-  if ! $SUDO apt-get install -y "${FPATH}"; then
-    echo "apt-get install завершился с ошибкой, пробуем dpkg + исправление зависимостей..."
-    $SUDO dpkg -i "${FPATH}" || true
-    $SUDO apt-get -y -f install || true
-  fi
-else
-  if command -v dpkg >/dev/null 2>&1; then
-    $SUDO dpkg -i "${FPATH}" || true
-  else
-    echo "Невозможно автоматически установить .deb: нет apt/dpkg." >&2
-    exit 1
-  fi
+# --- Установка .deb с обработкой зависимостей ---
+echo "Устанавливаю пакет и его зависимости..."
+if ! $SUDO apt-get install -y "$FPATH"; then
+  echo "Первая попытка установки не удалась, пробую исправить зависимости..."
+  $SUDO dpkg -i "$FPATH" || true
+  $SUDO apt-get -y -f install
 fi
 
-# 9) Найти бинарь duplicati-server
-BIN_PATH=""
-for candidate in /usr/bin/duplicati-server /usr/lib/duplicati/duplicati-server /usr/local/bin/duplicati-server; do
-  if [ -x "$candidate" ]; then
-    BIN_PATH="$candidate"
-    break
-  fi
-done
-if [ -z "$BIN_PATH" ]; then
-  BIN_PATH=$(command -v duplicati-server 2>/dev/null || true)
+# --- Поиск исполняемого файла duplicati-server ---
+BIN_PATH=$(command -v duplicati-server || echo "/usr/bin/duplicati-server")
+if [ ! -x "$BIN_PATH" ]; then
+    echo "Внимание: не удалось найти бинарный файл duplicati-server. Указан путь по умолчанию." >&2
 fi
-if [ -z "$BIN_PATH" ]; then
-  echo "Внимание: duplicati-server не найден после установки. Проверьте пакет." >&2
-  BIN_PATH="/usr/bin/duplicati-server"
-fi
-echo "Использую бинарь: $BIN_PATH"
+echo "Использую бинарный файл: $BIN_PATH"
 
-# 10) Проверка/генерация ENC_KEY (>=8)
+# --- Проверка/генерация ключа шифрования ---
 if [ "${#ENC_KEY}" -lt 8 ]; then
-  echo "Введённый ключ короткий (${#ENC_KEY}) — генерирую безопасный ключ (hex, 64 символа)..."
-  if command -v openssl >/dev/null 2>&1; then
-    ENC_KEY=$(openssl rand -hex 32)
-  else
-    ENC_KEY=$(xxd -p -l 32 /dev/urandom 2>/dev/null || head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-    [ "${#ENC_KEY}" -lt 8 ] && ENC_KEY="$(date +%s)-generated-key-$(head -c16 /dev/urandom | tr -dc 'a-f0-9' | head -c24)"
-  fi
-  echo "Сгенерированный ключ будет сохранён и использован."
+  echo "Ключ шифрования слишком короткий, генерирую новый..."
+  ENC_KEY=$(openssl rand -hex 32)
 fi
 
-# 11) Сохраняем пароли в защищённый env-файл
-escape_for_single_quotes() {
-  printf "%s" "$1" | sed "s/'/'\"'\"'/g"
-}
-WEB_ESC=$(escape_for_single_quotes "$WEB_PASS")
-ENC_ESC=$(escape_for_single_quotes "$ENC_KEY")
+# --- Санитизация (очистка) пароля и ключа ---
+WEB_CLEAN=$(printf "%s" "$WEB_PASS" | tr -d '\r\n')
+ENC_CLEAN=$(printf "%s" "$ENC_KEY" | tr -d '\r\n')
 
-$SUDO tee "$ENV_FILE" > /dev/null <<EOF
-WEB_PASS='${WEB_ESC}'
-ENC_KEY='${ENC_ESC}'
-EOF
+# --- Запись .env файла с учетными данными ---
+echo "Записываю переменные окружения в ${ENV_FILE}..."
+$SUDO bash -c "cat > '${ENV_FILE}' <<EOF
+WEB_PASS=${WEB_CLEAN}
+ENC_KEY=${ENC_CLEAN}
+EOF"
 $SUDO chown root:root "$ENV_FILE"
 $SUDO chmod 600 "$ENV_FILE"
-echo "Пароли сохранены в ${ENV_FILE} (mode 600)."
 
-# 12) Создаём systemd unit, использующий EnvironmentFile и найденный бинарь
-SERVICE_PATH="/etc/systemd/system/duplicati.service"
-echo "Создаю unit-файл ${SERVICE_PATH} ..."
-$SUDO tee "$SERVICE_PATH" > /dev/null <<EOF
+# --- Создание systemd unit файла ---
+echo "Создаю systemd unit файл: ${SERVICE_PATH}..."
+$SUDO bash -c "cat > '${SERVICE_PATH}' <<EOF
 [Unit]
 Description=Duplicati Backup Service
 After=network.target
@@ -216,40 +178,35 @@ After=network.target
 Type=simple
 User=root
 EnvironmentFile=${ENV_FILE}
-Environment=HOME=${WORK_DIR}
-ExecStart=${BIN_PATH} --webservice-interface=any --webservice-port=8200 --webservice-password=\$WEB_PASS --settings-encryption-key=\$ENC_KEY --webservice-allowed-hostnames=*
+ExecStart=/bin/bash -c 'exec \"${BIN_PATH}\" --webservice-interface=any --webservice-port=8200 --server-datafolder=\"${WORK_DIR}\" --webservice-password=\"\\\$WEB_PASS\" --settings-encryption-key=\"\\\$ENC_KEY\" --webservice-allowed-hostnames=*'
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 WorkingDirectory=${WORK_DIR}
 
 [Install]
 WantedBy=multi-user.target
-EOF
-
+EOF"
 $SUDO chmod 644 "$SERVICE_PATH"
 
-# 13) systemd reload + enable + start
+# --- Перезагрузка systemd и запуск сервиса ---
+echo "Перезагружаю systemd и запускаю сервис duplicati..."
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable duplicati.service
-$SUDO systemctl restart duplicati.service || {
-  echo "Сервис не запустился — покажу 200 последних строк журнала..."
-  $SUDO journalctl -u duplicati.service -n 200 --no-pager || true
-}
+$SUDO systemctl restart duplicati.service
 
-# 14) Результат — теперь выводим реальные значения паролей в терминал
-echo -e "\n===== Установка завершена (или запущена попытка) ====="
-echo "Доступно по адресам (порт 8200):"
-ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+\.\d+\.\d+\.\d+' | while read -r ip; do
-  echo "  http://${ip}:8200"
-done
+# --- Проверка статуса и вывод информации ---
+echo "Ожидаю запуск сервиса..."
+sleep 3
+$SUDO systemctl status duplicati.service --no-pager -l || true
 
-echo -e "\nИспользованные пароли/ключ (сохранены в ${ENV_FILE}):"
-# показываем реальные значения чтобы ты мог их сразу увидеть и сохранить
-printf "  • Веб-пароль:         %s\n" "$WEB_PASS"
-printf "  • Ключ шифрования:    %s\n" "$ENC_KEY"
+echo -e "\n✅ ===== Установка завершена ===== ✅"
+echo "Веб-интерфейс должен быть доступен по одному из этих адресов:"
+ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+\.\d+\.\d+\d+' | while read -r ip; do echo "  -> http://${ip}:8200"; done
 
-echo -e "\nФайлы скачаны в: ${FPATH}"
-echo "Рабочая папка Duplicati: ${WORK_DIR}"
+echo -e "\n🔒 Учетные данные (сохранены в ${ENV_FILE}):"
+printf "  • Веб-пароль:      %s\n" "$WEB_CLEAN"
+printf "  • Ключ шифрования: %s\n" "$ENC_CLEAN"
 
-# Подсказка: если нужно вернуть старые репозитории — удалите ${TEMP_SOURCES}"
+echo -e "\nℹ️ Старые конфигурационные файлы сохранены в: ${BACKUP_DIR}"
+echo "Готово."
 exit 0
