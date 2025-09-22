@@ -262,7 +262,7 @@ else
     MQTT_SERVER="$(echo -n "$MQTT_SERVER" | xargs)"
 fi
 
-if ask_yesno "Установлен ли Home Assistant на этой машине? (y/n):" "y"; then
+if ask_yesno "Будет ли использоваться для Home Assistant? (y/n):" "y"; then
     HA_ENABLED="true"
 else
     HA_ENABLED="false"
