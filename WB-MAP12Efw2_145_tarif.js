@@ -1,5 +1,5 @@
 // WB-rules: Multi-tariff energy aggregation + единицы измерения + кнопка Refresh
-// Версия 3.1 (Исправлено отображение единиц)
+// Версия 3.3 (Добавлена индикация текущего тарифа)
 
 // ----- Основные настройки -----
 var meterDevice = "wb-map12e_145"; // MQTT ID вашего счетчика MAP12E
@@ -46,25 +46,33 @@ defineVirtualDevice("map12e_tariffs", {
 
 // ----- Виртуальное устройство для отображения данных -----
 var dataCells = {};
-dataCells["tariffs_summary"] = {
-  title: "Тарифы",
+
+// ❗️ НОВАЯ ЯЧЕЙКА ДЛЯ ОТОБРАЖЕНИЯ АКТИВНОГО ТАРИФА
+dataCells["active_tariff_indicator"] = {
+  title: "Текущий тариф",
   type: "text",
   value: "инициализация...",
   readonly: true,
   meta: { "order": 1 }
 };
 
+dataCells["tariffs_summary"] = {
+  title: "Тарифы",
+  type: "text",
+  value: "инициализация...",
+  readonly: true,
+  meta: { "order": 2 }
+};
+
 for (var i = 1; i <= channels; i++) {
-  var id = ("0" + i).slice(-2); // Форматируем номер канала (1 -> 01, 2 -> 02)
+  var id = ("0" + i).slice(-2);
   for (var t = 1; t <= 4; t++) {
     dataCells["ch" + id + "_T" + t] = {
       title: "Ch " + i + " T" + t + " Energy",
-      // ❗️ИСПРАВЛЕНО ЗДЕСЬ: 'type' должен быть "power_consumption"
-      type: "power_consumption", 
+      type: "power_consumption",
       value: 0,
       readonly: true,
-      // 'type' убран из meta, здесь ему не место
-      meta: { "order": i * 10 + t, "unit": "кВт·ч" } 
+      meta: { "order": i * 10 + t, "unit": "кВт·ч" }
     };
   }
   dataCells["ch" + id + "_status"] = {
@@ -74,23 +82,22 @@ for (var i = 1; i <= channels; i++) {
     readonly: true,
     meta: { "order": 101 + i * 10 }
   };
-   dataCells["ch" + id + "_last_total"] = {
+  dataCells["ch" + id + "_last_total"] = {
     title: "Ch " + i + " Total (internal)",
-    // ❗️ИСПРАВЛЕНО ЗДЕСЬ: 'type' должен быть "power_consumption"
     type: "power_consumption",
     value: 0,
     readonly: true,
-    // 'type' убран из meta
-    meta: { "order": 100 + i*10, "unit": "кВт·ч" }
+    meta: { "order": 100 + i * 10, "unit": "кВт·ч" }
   };
 }
+
 // Кнопка для ручного обновления информации о тарифах
 dataCells["refresh_tariffs"] = {
   title: "Обновить тарифы",
   type: "pushbutton",
   value: false,
   readonly: false,
-  meta: { "order": 4 }
+  meta: { "order": 3 }
 };
 
 defineVirtualDevice("map12e_data", {
@@ -99,7 +106,7 @@ defineVirtualDevice("map12e_data", {
 });
 
 
-// ----- Вспомогательные функции (без изменений) -----
+// ----- Вспомогательные функции -----
 
 function parseTimeHHMM(str) {
   var parts = str.split(":");
@@ -154,7 +161,7 @@ function getTariffIndex() {
 function getTariffsSummaryString(currentTariffIndex) {
   var cfg = getTariffConfig();
   if (cfg.count === 1) {
-    return "Т1 (круглосуточно) <-- активен";
+    return "Т1 (круглосуточно)";
   }
 
   var tariffs = [];
@@ -169,16 +176,13 @@ function getTariffsSummaryString(currentTariffIndex) {
   var summaryParts = [];
   for (var i = 0; i < tariffs.length; i++) {
     var part = "Т" + tariffs[i].index + " (с " + tariffs[i].startStr + ")";
-    if (tariffs[i].index === currentTariffIndex) {
-      part += " <-- активен";
-    }
     summaryParts.push(part);
   }
   return summaryParts.join("; ");
 }
 
 function readChTotalAP(ch) {
-  var ctrlName = "Ch " + ch + " Total AP energy";
+  var ctrlName = "Ch " + ch + " AP energy L1";
   if (dev[meterDevice] && dev[meterDevice][ctrlName] !== undefined) {
     var v = parseFloat(dev[meterDevice][ctrlName]);
     return isNaN(v) ? null : v;
@@ -186,11 +190,14 @@ function readChTotalAP(ch) {
   return null;
 }
 
-// ----- Функция обновления информации о тарифах (без изменений) -----
+// ----- Функция обновления информации о тарифах -----
 function updateTariffInfo() {
   log("Обновление информации о тарифах...");
   var tariffIndex = getTariffIndex();
   var summary = getTariffsSummaryString(tariffIndex);
+
+  // ❗️ ОБНОВЛЯЕМ НОВУЮ ЯЧЕЙКУ И СТАРУЮ
+  dev["map12e_data"]["active_tariff_indicator"] = "Т" + tariffIndex + " (обновлено: " + (new Date()).toLocaleTimeString() + ")";
   dev["map12e_data"]["tariffs_summary"] = summary;
   
   var cfg = getTariffConfig();
@@ -203,7 +210,7 @@ function updateTariffInfo() {
       }
     }
   }
-  log("Информация о тарифах обновлена. " + summary);
+  log("Информация о тарифах обновлена. Текущий тариф: Т" + tariffIndex);
 }
 
 // ----- Инициализация (без изменений) -----
@@ -222,14 +229,17 @@ setTimeout(function() {
   updateTariffInfo();
 }, 5000);
 
-// ----- Основной цикл обработки данных (без изменений) -----
+// ----- Основной цикл обработки данных -----
 defineRule("map12e_data_aggregator", {
   when: cron("*/" + Math.max(5, updateIntervalSec) + " * * * * *"),
   then: function() {
     var tariffIndex = getTariffIndex();
-    if (!dev["map12e_data"]["tariffs_summary"].includes("Т" + tariffIndex + " <--")) {
-        updateTariffInfo();
-    }
+    
+    // ❗️ УБРАНО ЛОГИРОВАНИЕ, КОТОРОЕ БЫЛО ИЗБЫТОЧНЫМ
+    // if (!dev["map12e_data"]["tariffs_summary"].includes("Т" + tariffIndex + " <--")) {
+    //     updateTariffInfo();
+    // }
+    updateTariffInfo(); // Обновляем информацию о тарифах при каждом запуске
 
     for (var i = 1; i <= channels; i++) {
       var id = ("0" + i).slice(-2);
