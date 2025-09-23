@@ -1,5 +1,5 @@
 // WB-rules: Multi-tariff energy aggregation + единицы измерения + кнопка Refresh
-// Версия 4.3 (Добавлена дата последней корректировки тарифа)
+// Версия 4.4 (Исправлена ошибка ручного обновления для всех тарифов)
 
 // ----- Основные настройки -----
 var meterDevice = "wb-map12e_145"; // MQTT ID вашего счетчика MAP12E
@@ -85,7 +85,6 @@ for (var i = 1; i <= channels; i++) {
       readonly: false,
       meta: { "order": 1000 + i * 10 + t, "unit": "кВт·ч" }
     };
-    // ❗️ НОВАЯ ЯЧЕЙКА ДЛЯ ДАТЫ ОБНОВЛЕНИЯ
     dataCells["ch" + id + "_T" + t + "_last_update"] = {
       title: "Ch " + i + " T" + t + " Last Manual Update",
       type: "text",
@@ -250,7 +249,7 @@ setTimeout(function() {
   updateTariffInfo();
 }, 5000);
 
-// ----- Основной цикл обработки данных (изменено) -----
+// ----- Основной цикл обработки данных (исправлено) -----
 defineRule("map12e_data_aggregator", {
   when: cron("*/" + Math.max(5, updateIntervalSec) + " * * * * *"),
   then: function() {
@@ -282,21 +281,29 @@ defineRule("map12e_data_aggregator", {
       }
 
       if (delta > 0) {
-        var tariffControl = "ch" + id + "_T" + tariffIndex;
-        var manualControl = "ch" + id + "_T" + tariffIndex + "_manual";
-        // ❗️ НОВАЯ ЯЧЕЙКА ДЛЯ ВРЕМЕНИ ОБНОВЛЕНИЯ
-        var updateControl = "ch" + id + "_T" + tariffIndex + "_last_update";
+        // ❗️ ИСПРАВЛЕНО: Теперь проверяем все тарифы на ручное значение
+        var updatedManually = false;
+        var cfg = getTariffConfig();
+        for (var t = 1; t <= cfg.count; t++) {
+            var tariffControl = "ch" + id + "_T" + t;
+            var manualControl = "ch" + id + "_T" + t + "_manual";
+            var updateControl = "ch" + id + "_T" + t + "_last_update";
 
-        var manualValue = parseFloat(dev["map12e_data"][manualControl]) || 0;
-        if (manualValue > 0) {
-            var prev = manualValue;
-            dev["map12e_data"][tariffControl] = parseFloat((prev + delta).toFixed(6));
-            dev["map12e_data"][manualControl] = 0;
-            // ❗️ ОБНОВЛЕНИЕ ДАТЫ И ВРЕМЕНИ
-            dev["map12e_data"][updateControl] = (new Date()).toLocaleString();
-        } else {
-            var prev = parseFloat(dev["map12e_data"][tariffControl]) || 0;
-            dev["map12e_data"][tariffControl] = parseFloat((prev + delta).toFixed(6));
+            var manualValue = parseFloat(dev["map12e_data"][manualControl]) || 0;
+
+            if (manualValue > 0) {
+                dev["map12e_data"][tariffControl] = parseFloat((manualValue).toFixed(6));
+                dev["map12e_data"][manualControl] = 0;
+                dev["map12e_data"][updateControl] = (new Date()).toLocaleString();
+                updatedManually = true;
+            }
+        }
+        
+        // Добавляем дельту только к текущему тарифу, если не было ручного обновления
+        if (!updatedManually) {
+             var currentTariffControl = "ch" + id + "_T" + tariffIndex;
+             var prev = parseFloat(dev["map12e_data"][currentTariffControl]) || 0;
+             dev["map12e_data"][currentTariffControl] = parseFloat((prev + delta).toFixed(6));
         }
       }
 
