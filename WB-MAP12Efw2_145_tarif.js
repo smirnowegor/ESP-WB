@@ -1,5 +1,5 @@
 // WB-rules: Multi-tariff energy aggregation + единицы измерения + кнопка Refresh
-// Версия 4.2 (Исправлен сброс ручных показаний)
+// Версия 4.3 (Добавлена дата последней корректировки тарифа)
 
 // ----- Основные настройки -----
 var meterDevice = "wb-map12e_145"; // MQTT ID вашего счетчика MAP12E
@@ -84,6 +84,14 @@ for (var i = 1; i <= channels; i++) {
       value: 0,
       readonly: false,
       meta: { "order": 1000 + i * 10 + t, "unit": "кВт·ч" }
+    };
+    // ❗️ НОВАЯ ЯЧЕЙКА ДЛЯ ДАТЫ ОБНОВЛЕНИЯ
+    dataCells["ch" + id + "_T" + t + "_last_update"] = {
+      title: "Ch " + i + " T" + t + " Last Manual Update",
+      type: "text",
+      value: "",
+      readonly: true,
+      meta: { "order": 2000 + i * 10 + t }
     };
   }
   dataCells["ch" + id + "_status"] = {
@@ -226,7 +234,7 @@ function updateTariffInfo() {
   log("Информация о тарифах обновлена. Текущий тариф: Т" + tariffIndex);
 }
 
-// ----- Инициализация (изменено) -----
+// ----- Инициализация (без изменений) -----
 setTimeout(function() {
   log("Первоначальная инициализация скрипта...");
   for (var i = 1; i <= channels; i++) {
@@ -276,17 +284,17 @@ defineRule("map12e_data_aggregator", {
       if (delta > 0) {
         var tariffControl = "ch" + id + "_T" + tariffIndex;
         var manualControl = "ch" + id + "_T" + tariffIndex + "_manual";
+        // ❗️ НОВАЯ ЯЧЕЙКА ДЛЯ ВРЕМЕНИ ОБНОВЛЕНИЯ
+        var updateControl = "ch" + id + "_T" + tariffIndex + "_last_update";
 
-        // Проверяем, было ли ручное значение
         var manualValue = parseFloat(dev["map12e_data"][manualControl]) || 0;
         if (manualValue > 0) {
-            // Если ручное значение есть, используем его как основу
             var prev = manualValue;
             dev["map12e_data"][tariffControl] = parseFloat((prev + delta).toFixed(6));
-            // После использования сбрасываем ручное значение, чтобы избежать повторного добавления
-            dev["map12e_data"][manualControl] = 0; 
+            dev["map12e_data"][manualControl] = 0;
+            // ❗️ ОБНОВЛЕНИЕ ДАТЫ И ВРЕМЕНИ
+            dev["map12e_data"][updateControl] = (new Date()).toLocaleString();
         } else {
-            // Если ручного значения нет, считаем как обычно
             var prev = parseFloat(dev["map12e_data"][tariffControl]) || 0;
             dev["map12e_data"][tariffControl] = parseFloat((prev + delta).toFixed(6));
         }
@@ -298,6 +306,12 @@ defineRule("map12e_data_aggregator", {
   }
 });
 
-// ❗️ УБРАН БЛОК СИНХРОНИЗАЦИИ
-// Теперь ручные значения используются напрямую в основном цикле, а не синхронизируются
-// это предотвращает затирание данных
+// ----- Обработчик кнопки обновления тарифов (без изменений) -----
+defineRule("map12e_tariff_refresher", {
+  whenChanged: "map12e_data/refresh_tariffs",
+  then: function(newValue, devName, cellName) {
+    if (newValue) {
+      updateTariffInfo();
+    }
+  }
+});
