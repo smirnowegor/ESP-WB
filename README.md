@@ -17,4 +17,4 @@ Teletype: https://teletype.in/@godisblind
 Контакты / Contact
 
 Автор: Егор (smirnowegor) — канал и соцсети выше.
-Для срочной консультации и заказов — пишите в Telegram: https://t.me/u2smart4home
+Для срочной консультации и заказов — пишите в Telegram:  https://t.me/godisblind
