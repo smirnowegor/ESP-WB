@@ -1,0 +1,1609 @@
+esphome:
+  name: power-meter-wb
+  friendly_name: Power meter WB
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+  baud_rate: 0  # Отключаем UART-лог, чтобы не мешать Modbus
+
+api:
+  encryption:
+    key: "sxWEpXpF3dwF75IljHZ3YtzquJmbogYYD8A//YndCxA="
+
+ota:
+  - platform: esphome
+    password: "PASSWORD"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Power-Meter-Fallback"
+    password: "PASSWORD"
+
+captive_portal:
+
+# ===================================================================
+# UART & MODBUS
+# ===================================================================
+uart:
+  id: uart_modbus
+  tx_pin: 21
+  rx_pin: 20
+  baud_rate: 9600
+  parity: NONE
+  stop_bits: 2
+  data_bits: 8
+
+modbus:
+  - uart_id: uart_modbus
+    id: modbus_bus
+
+modbus_controller:
+  - id: wb_map12e
+    modbus_id: modbus_bus
+    address: 0x91
+    update_interval: 10s
+    setup_priority: -10
+
+# ===================================================================
+# SENSORS — ИЗМЕРЯЕМЫЕ ВЕЛИЧИНЫ (чтение)
+# ===================================================================
+sensor:
+  # --- Общие параметры сети ---
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Voltage L1"
+    address: 0x1410
+    unit_of_measurement: "V"
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Voltage L2"
+    address: 0x1412
+    unit_of_measurement: "V"
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Voltage L3"
+    address: 0x1414
+    unit_of_measurement: "V"
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Frequency"
+    address: 0x10F8
+    unit_of_measurement: "Hz"
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  # --------------------- Channel 1 ---------------------
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 Total Energy (AP)"
+    address: 0x1200
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 Total Power"
+    address: 0x1300
+    unit_of_measurement: "W"
+    device_class: power
+    value_type: S_DWORD
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.00512
+
+  # --- Channel 1 Phase Energy (CORRECTED) ---
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 L1 Energy (AP)"
+    address: 0x1204
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 L2 Energy (AP)"
+    address: 0x1208
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 L3 Energy (AP)"
+    address: 0x120C
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 Current L1"
+    address: 0x1416
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 Current L2"
+    address: 0x1418
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch1 Current L3"
+    address: 0x141A
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+# --------------------- Channel 2 ---------------------
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 Total Energy (AP)"
+    address: 0x2200
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 Total Power"
+    address: 0x2300
+    unit_of_measurement: "W"
+    device_class: power
+    value_type: S_DWORD
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.00512
+
+  # --- Channel 2 Phase Energy (CORRECTED) ---
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 L1 Energy (AP)"
+    address: 0x2204
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 L2 Energy (AP)"
+    address: 0x2208
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 L3 Energy (AP)"
+    address: 0x220C
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 Current L1"
+    address: 0x2416
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 Current L2"
+    address: 0x2418
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch2 Current L3"
+    address: 0x241A
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+# --------------------- Channel 3 ---------------------
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 Total Energy (AP)"
+    address: 0x3200
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 Total Power"
+    address: 0x3300
+    unit_of_measurement: "W"
+    device_class: power
+    value_type: S_DWORD
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.00512
+
+  # --- Channel 3 Phase Energy (CORRECTED) ---
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 L1 Energy (AP)"
+    address: 0x3204
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 L2 Energy (AP)"
+    address: 0x3208
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 L3 Energy (AP)"
+    address: 0x320C
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 Current L1"
+    address: 0x3416
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 Current L2"
+    address: 0x3418
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch3 Current L3"
+    address: 0x341A
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+# --------------------- Channel 4 ---------------------
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 Total Energy (AP)"
+    address: 0x4200
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 Total Power"
+    address: 0x4300
+    unit_of_measurement: "W"
+    device_class: power
+    value_type: S_DWORD
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.00512
+
+  # --- Channel 4 Phase Energy (CORRECTED) ---
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 L1 Energy (AP)"
+    address: 0x4204
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 L2 Energy (AP)"
+    address: 0x4208
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 L3 Energy (AP)"
+    address: 0x420C
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_QWORD_R
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.00001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 Current L1"
+    address: 0x4416
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 Current L2"
+    address: 0x4418
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Ch4 Current L3"
+    address: 0x441A
+    unit_of_measurement: "A"
+    device_class: current
+    value_type: U_WORD
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.016
+
+
+  # CT parameters for Channel 1 - raw and converted
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Ratio L1 (raw)"
+    id: ch1_ct_ratio_l1_raw
+    register_type: holding
+    address: 0x1460
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Ratio L1"
+    id: ch1_ct_ratio_l1
+    register_type: holding
+    address: 0x1460
+    value_type: U_WORD
+    unit_of_measurement: ""
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Ratio L2"
+    id: ch1_ct_ratio_l2
+    register_type: holding
+    address: 0x1461
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Ratio L3"
+    id: ch1_ct_ratio_l3
+    register_type: holding
+    address: 0x1462
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Phase Delay L1 (raw)"
+    id: ch1_phase_delay_l1_raw
+    register_type: holding
+    address: 0x1463
+    value_type: S_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Phase Delay L1 (deg)"
+    id: ch1_phase_delay_l1
+    register_type: holding
+    address: 0x1463
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Phase Delay L2 (deg)"
+    id: ch1_phase_delay_l2
+    register_type: holding
+    address: 0x1464
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT Phase Delay L3 (deg)"
+    id: ch1_phase_delay_l3
+    register_type: holding
+    address: 0x1465
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT1 Phase Select"
+    id: ch1_ct1_phase
+    register_type: holding
+    address: 0x14A0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT2 Phase Select"
+    id: ch1_ct2_phase
+    register_type: holding
+    address: 0x14A1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT3 Phase Select"
+    id: ch1_ct3_phase
+    register_type: holding
+    address: 0x14A2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT L1 Invert (status)"
+    id: ch1_ct_l1_invert_status
+    register_type: holding
+    address: 0x14B0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT L2 Invert (status)"
+    id: ch1_ct_l2_invert_status
+    register_type: holding
+    address: 0x14B1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT L3 Invert (status)"
+    id: ch1_ct_l3_invert_status
+    register_type: holding
+    address: 0x14B2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  # --------------------- Channel 2 (mirror Channel 1 parameters) ---------------------
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: holding
+    name: "Ch2 CT Ratio L1 (raw)"
+    id: ch2_ct_ratio_l1_raw
+    address: 0x2460
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT Ratio L1"
+    id: ch2_ct_ratio_l1
+    register_type: holding
+    address: 0x2460
+    value_type: U_WORD
+    unit_of_measurement: ""
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT Ratio L2"
+    id: ch2_ct_ratio_l2
+    register_type: holding
+    address: 0x2461
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT Ratio L3"
+    id: ch2_ct_ratio_l3
+    register_type: holding
+    address: 0x2462
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT Phase Delay L1 (raw)"
+    id: ch2_phase_delay_l1_raw
+    register_type: holding
+    address: 0x2463
+    value_type: S_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT Phase Delay L1 (deg)"
+    id: ch2_phase_delay_l1
+    register_type: holding
+    address: 0x2463
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT Phase Delay L2 (deg)"
+    id: ch2_phase_delay_l2
+    register_type: holding
+    address: 0x2464
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT Phase Delay L3 (deg)"
+    id: ch2_phase_delay_l3
+    register_type: holding
+    address: 0x2465
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT1 Phase Select"
+    id: ch2_ct1_phase
+    register_type: holding
+    address: 0x24A0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT2 Phase Select"
+    id: ch2_ct2_phase
+    register_type: holding
+    address: 0x24A1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT3 Phase Select"
+    id: ch2_ct3_phase
+    register_type: holding
+    address: 0x24A2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT L1 Invert (status)"
+    id: ch2_ct_l1_invert_status
+    register_type: holding
+    address: 0x24B0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT L2 Invert (status)"
+    id: ch2_ct_l2_invert_status
+    register_type: holding
+    address: 0x24B1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT L3 Invert (status)"
+    id: ch2_ct_l3_invert_status
+    register_type: holding
+    address: 0x24B2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  # --------------------- Channel 3 (mirror Channel 1 parameters) ---------------------
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Ratio L1 (raw)"
+    id: ch3_ct_ratio_l1_raw
+    register_type: holding
+    address: 0x3460
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Ratio L1"
+    id: ch3_ct_ratio_l1
+    register_type: holding
+    address: 0x3460
+    value_type: U_WORD
+    unit_of_measurement: ""
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Ratio L2"
+    id: ch3_ct_ratio_l2
+    register_type: holding
+    address: 0x3461
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Ratio L3"
+    id: ch3_ct_ratio_l3
+    register_type: holding
+    address: 0x3462
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Phase Delay L1 (raw)"
+    id: ch3_phase_delay_l1_raw
+    register_type: holding
+    address: 0x3463
+    value_type: S_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Phase Delay L1 (deg)"
+    id: ch3_phase_delay_l1
+    register_type: holding
+    address: 0x3463
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Phase Delay L2 (deg)"
+    id: ch3_phase_delay_l2
+    register_type: holding
+    address: 0x3464
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT Phase Delay L3 (deg)"
+    id: ch3_phase_delay_l3
+    register_type: holding
+    address: 0x3465
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT1 Phase Select"
+    id: ch3_ct1_phase
+    register_type: holding
+    address: 0x34A0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT2 Phase Select"
+    id: ch3_ct2_phase
+    register_type: holding
+    address: 0x34A1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT3 Phase Select"
+    id: ch3_ct3_phase
+    register_type: holding
+    address: 0x34A2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT L1 Invert (status)"
+    id: ch3_ct_l1_invert_status
+    register_type: holding
+    address: 0x34B0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT L2 Invert (status)"
+    id: ch3_ct_l2_invert_status
+    register_type: holding
+    address: 0x34B1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT L3 Invert (status)"
+    id: ch3_ct_l3_invert_status
+    register_type: holding
+    address: 0x34B2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  # --------------------- Channel 4 (mirror Channel 1 parameters) ---------------------
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Ratio L1 (raw)"
+    id: ch4_ct_ratio_l1_raw
+    register_type: holding
+    address: 0x4460
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Ratio L1"
+    id: ch4_ct_ratio_l1
+    register_type: holding
+    address: 0x4460
+    value_type: U_WORD
+    unit_of_measurement: ""
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Ratio L2"
+    id: ch4_ct_ratio_l2
+    register_type: holding
+    address: 0x4461
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Ratio L3"
+    id: ch4_ct_ratio_l3
+    register_type: holding
+    address: 0x4462
+    value_type: U_WORD
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Phase Delay L1 (raw)"
+    id: ch4_phase_delay_l1_raw
+    register_type: holding
+    address: 0x4463
+    value_type: S_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Phase Delay L1 (deg)"
+    id: ch4_phase_delay_l1
+    register_type: holding
+    address: 0x4463
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Phase Delay L2 (deg)"
+    id: ch4_phase_delay_l2
+    register_type: holding
+    address: 0x4464
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT Phase Delay L3 (deg)"
+    id: ch4_phase_delay_l3
+    register_type: holding
+    address: 0x4465
+    value_type: S_WORD
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    filters:
+      - multiply: 0.001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT1 Phase Select"
+    id: ch4_ct1_phase
+    register_type: holding
+    address: 0x44A0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT2 Phase Select"
+    id: ch4_ct2_phase
+    register_type: holding
+    address: 0x44A1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT3 Phase Select"
+    id: ch4_ct3_phase
+    register_type: holding
+    address: 0x44A2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT L1 Invert (status)"
+    id: ch4_ct_l1_invert_status
+    register_type: holding
+    address: 0x44B0
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT L2 Invert (status)"
+    id: ch4_ct_l2_invert_status
+    register_type: holding
+    address: 0x44B1
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT L3 Invert (status)"
+    id: ch4_ct_l3_invert_status
+    register_type: holding
+    address: 0x44B2
+    value_type: U_WORD
+    accuracy_decimals: 0
+
+# ===================================================================
+# TEXT SENSORS
+# ===================================================================
+text_sensor:
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Model"
+    address: 0x00C8
+    register_count: 20
+    raw_encode: NONE
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    register_type: read
+    name: "Firmware Version"
+    address: 0x00FA
+    register_count: 16
+    raw_encode: NONE
+
+# ===================================================================
+# NUMBER — НАСТРОЙКИ (записываемые параметры)
+# ===================================================================
+number:
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Peak Reset Timer"
+    address: 0x10F0
+    register_type: holding
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    unit_of_measurement: "s"
+    step: 1
+
+  # Channel 1 writeable params
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT Ratio L1"
+    id: set_ch1_ct_ratio_l1
+    register_type: holding
+    address: 0x1460
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT Ratio L2"
+    id: set_ch1_ct_ratio_l2
+    register_type: holding
+    address: 0x1461
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT Ratio L3"
+    id: set_ch1_ct_ratio_l3
+    register_type: holding
+    address: 0x1462
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT Phase Delay L1"
+    id: set_ch1_phase_delay_l1
+    register_type: holding
+    address: 0x1463
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT Phase Delay L2"
+    id: set_ch1_phase_delay_l2
+    register_type: holding
+    address: 0x1464
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT Phase Delay L3"
+    id: set_ch1_phase_delay_l3
+    register_type: holding
+    address: 0x1465
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT1 Phase Select"
+    id: set_ch1_ct1_phase
+    register_type: holding
+    address: 0x14A0
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT2 Phase Select"
+    id: set_ch1_ct2_phase
+    register_type: holding
+    address: 0x14A1
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch1 CT3 Phase Select"
+    id: set_ch1_ct3_phase
+    register_type: holding
+    address: 0x14A2
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  # Channel 2 writeable params
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT Ratio L1"
+    id: set_ch2_ct_ratio_l1
+    register_type: holding
+    address: 0x2460
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT Ratio L2"
+    id: set_ch2_ct_ratio_l2
+    register_type: holding
+    address: 0x2461
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT Ratio L3"
+    id: set_ch2_ct_ratio_l3
+    register_type: holding
+    address: 0x2462
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT Phase Delay L1"
+    id: set_ch2_phase_delay_l1
+    register_type: holding
+    address: 0x2463
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT Phase Delay L2"
+    id: set_ch2_phase_delay_l2
+    register_type: holding
+    address: 0x2464
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT Phase Delay L3"
+    id: set_ch2_phase_delay_l3
+    register_type: holding
+    address: 0x2465
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT1 Phase Select"
+    id: set_ch2_ct1_phase
+    register_type: holding
+    address: 0x24A0
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT2 Phase Select"
+    id: set_ch2_ct2_phase
+    register_type: holding
+    address: 0x24A1
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch2 CT3 Phase Select"
+    id: set_ch2_ct3_phase
+    register_type: holding
+    address: 0x24A2
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  # Channel 3 writeable params
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT Ratio L1"
+    id: set_ch3_ct_ratio_l1
+    register_type: holding
+    address: 0x3460
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT Ratio L2"
+    id: set_ch3_ct_ratio_l2
+    register_type: holding
+    address: 0x3461
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT Ratio L3"
+    id: set_ch3_ct_ratio_l3
+    register_type: holding
+    address: 0x3462
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT Phase Delay L1"
+    id: set_ch3_phase_delay_l1
+    register_type: holding
+    address: 0x3463
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT Phase Delay L2"
+    id: set_ch3_phase_delay_l2
+    register_type: holding
+    address: 0x3464
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT Phase Delay L3"
+    id: set_ch3_phase_delay_l3
+    register_type: holding
+    address: 0x3465
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT1 Phase Select"
+    id: set_ch3_ct1_phase
+    register_type: holding
+    address: 0x34A0
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT2 Phase Select"
+    id: set_ch3_ct2_phase
+    register_type: holding
+    address: 0x34A1
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch3 CT3 Phase Select"
+    id: set_ch3_ct3_phase
+    register_type: holding
+    address: 0x34A2
+    value_type: U_WORD
+    min_value: 1
+    max_value: 3
+    step: 1
+
+  # Channel 4 writeable params
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch4 CT Ratio L1"
+    id: set_ch4_ct_ratio_l1
+    register_type: holding
+    address: 0x4460
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch4 CT Ratio L2"
+    id: set_ch4_ct_ratio_l2
+    register_type: holding
+    address: 0x4461
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch4 CT Ratio L3"
+    id: set_ch4_ct_ratio_l3
+    register_type: holding
+    address: 0x4462
+    value_type: U_WORD
+    min_value: 0
+    max_value: 65535
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch4 CT Phase Delay L1"
+    id: set_ch4_phase_delay_l1
+    register_type: holding
+    address: 0x4463
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch4 CT Phase Delay L2"
+    id: set_ch4_phase_delay_l2
+    register_type: holding
+    address: 0x4464
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Set Ch4 CT Phase Delay L3"
+    id: set_ch4_phase_delay_l3
+    register_type: holding
+    address: 0x4465
+    value_type: S_WORD
+    min_value: -32768
+    max_value: 32767
+    step: 1
+
+  - platform: modbus_controller
+    id: reboot_register
+    modbus_controller_id: wb_map12e
+    name: "Reboot Device Register"
+    address: 0x0078
+    register_type: holding
+    value_type: U_WORD
+    mode: box
+    internal: true
+
+  - platform: modbus_controller
+    id: factory_reset_register
+    modbus_controller_id: wb_map12e
+    name: "Factory Reset Register"
+    address: 0xFF7A
+    register_type: holding
+    value_type: U_WORD
+    mode: box
+    internal: true
+
+# ===================================================================
+# SWITCH — ИНВЕРСИЯ ТТ (через запись бита)
+# ===================================================================
+switch:
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT L1 Invert"
+    register_type: holding
+    address: 0x14B0
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT L2 Invert"
+    register_type: holding
+    address: 0x14B1
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch1 CT L3 Invert"
+    register_type: holding
+    address: 0x14B2
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT L1 Invert"
+    register_type: holding
+    address: 0x24B0
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT L2 Invert"
+    register_type: holding
+    address: 0x24B1
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch2 CT L3 Invert"
+    register_type: holding
+    address: 0x24B2
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT L1 Invert"
+    register_type: holding
+    address: 0x34B0
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT L2 Invert"
+    register_type: holding
+    address: 0x34B1
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch3 CT L3 Invert"
+    register_type: holding
+    address: 0x34B2
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT L1 Invert"
+    register_type: holding
+    address: 0x44B0
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT L2 Invert"
+    register_type: holding
+    address: 0x44B1
+    bitmask: 0x0001
+
+  - platform: modbus_controller
+    modbus_controller_id: wb_map12e
+    name: "Ch4 CT L3 Invert"
+    register_type: holding
+    address: 0x44B2
+    bitmask: 0x0001
+
+# ===================================================================
+# BUTTON — ДЕЙСТВИЯ
+# ===================================================================
+button:
+  - platform: template
+    name: "Reboot Device"
+    on_press:
+      - number.set:
+          id: reboot_register
+          value: 1
+
+  - platform: template
+    name: "Factory Reset"
+    on_press:
+      - number.set:
+          id: factory_reset_register
+          value: 1
