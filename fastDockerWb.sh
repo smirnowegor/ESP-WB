@@ -9,44 +9,89 @@ if [[ $EUID -ne 0 ]]; then
     ERR "Этот скрипт необходимо запускать от имени root."
 fi
 
+require_cmd() {
+    local cmd="$1"
+    command -v "$cmd" >/dev/null 2>&1 || ERR "Не найдена команда '$cmd'. Установите пакет и повторите."
+}
+
+get_mount_point() {
+    local path="$1"
+    if command -v findmnt >/dev/null 2>&1; then
+        findmnt -no TARGET --target "$path" 2>/dev/null || true
+    else
+        df -P "$path" | awk 'NR==2{print $6}'
+    fi
+}
+
+check_space_and_inodes() {
+    local path="$1"
+    local min_bytes=$((2*1024*1024*1024))
+    local min_inodes=20000
+    local free_bytes
+    local free_inodes
+
+    free_bytes=$(df -B1 "$path" | awk 'NR==2{print $4}')
+    free_inodes=$(df -Pi "$path" | awk 'NR==2{print $4}')
+
+    if [[ -n "$free_bytes" && "$free_bytes" -lt "$min_bytes" ]]; then
+        WARN "Свободного места меньше 2 ГБ на разделе $path. Возможны ошибки при распаковке образов."
+    fi
+
+    if [[ -n "$free_inodes" && "$free_inodes" -lt "$min_inodes" ]]; then
+        WARN "Мало inode на разделе $path. Возможны ошибки 'no space left on device'."
+    fi
+}
+
+check_writable_dir() {
+    local path="$1"
+    mkdir -p "$path"
+    local testfile="$path/.write_test_$$"
+    if ! (echo "test" > "$testfile") 2>/dev/null; then
+        ERR "Нет прав записи в $path. Проверьте раздел и права доступа."
+    fi
+    rm -f "$testfile"
+}
+
 # --- ИСПРАВЛЕНИЕ 1: Удаление конфликтов (даже если докер вроде бы есть) ---
 LOG "Шаг 0: Подготовка системы и удаление старых/конфликтующих пакетов..."
-# Удаляем пакеты Debian, которые конфликтуют с Docker CE
-for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do
+# Удаляем пакеты Debian, которые конфликтуют с Docker CE, а также старые пакеты Docker CE
+for pkg in docker.io docker-doc docker-compose podman-docker containerd runc docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin; do
     apt-get remove -y $pkg >/dev/null 2>&1 || true
 done
 
-# Теперь проверяем, установлен ли именно Docker CE
+SKIP_INSTALL=false
 if command -v docker &> /dev/null && docker info 2>/dev/null | grep -q "Docker Root Dir"; then
-    LOG "Docker CE корректно установлен. Пропускаем тяжелую установку."
+    LOG "Docker обнаружен. Выполним переустановку для чистой установки."
 else
-    LOG "Шаг 1: Установка зависимостей..."
-    apt-get update -y
-    apt-get install -y ca-certificates curl gnupg lsb-release iptables apt-transport-https rsync --no-install-recommends
-
-    LOG "Шаг 2: Настройка iptables (legacy)..."
-    update-alternatives --set iptables /usr/sbin/iptables-legacy || true
-    update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
-
-    LOG "Шаг 3: Добавление репозитория..."
-    install -m 0755 -d /etc/apt/keyrings
-    # Используем pipe в gpg, так надежнее чем скачивать файл
-    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
-    chmod a+r /etc/apt/keyrings/docker.gpg
-
-    ARCH=$(dpkg --print-architecture)
-    CODENAME=$(lsb_release -cs)
-    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $CODENAME stable" > /etc/apt/sources.list.d/docker.list
-
-    LOG "Шаг 4: Установка Docker Engine..."
-    # --- ИСПРАВЛЕНИЕ 2: Лечим ошибку 404 ---
-    LOG "Очистка кэша APT для предотвращения ошибок 404..."
-    rm -rf /var/lib/apt/lists/*
-    apt-get update -y
-
-    # Ставим с флагом --fix-missing
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin --no-install-recommends
+    LOG "Docker не обнаружен. Выполним установку."
 fi
+
+LOG "Шаг 1: Установка зависимостей..."
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg lsb-release iptables apt-transport-https rsync --no-install-recommends
+
+LOG "Шаг 2: Настройка iptables (legacy)..."
+update-alternatives --set iptables /usr/sbin/iptables-legacy || true
+update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
+
+LOG "Шаг 3: Добавление репозитория..."
+install -m 0755 -d /etc/apt/keyrings
+# Используем pipe в gpg, так надежнее чем скачивать файл
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+ARCH=$(dpkg --print-architecture)
+CODENAME=$(lsb_release -cs)
+echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $CODENAME stable" > /etc/apt/sources.list.d/docker.list
+
+LOG "Шаг 4: Установка Docker Engine..."
+# --- ИСПРАВЛЕНИЕ 2: Лечим ошибку 404 ---
+LOG "Очистка кэша APT для предотвращения ошибок 404..."
+rm -rf /var/lib/apt/lists/*
+apt-get update -y
+
+# Ставим с флагом --fix-missing
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin --no-install-recommends
 
 LOG "Шаг 5: Выбор диска для данных."
 
@@ -91,51 +136,166 @@ else
     fi
 fi
 
+LOG "Выбран путь для данных Docker: $DOCKER_PATH"
+
 CURRENT_DOCKER_PATH=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
 
+NEED_MOVE_DOCKER=true
 if [[ "$DOCKER_PATH" == "$CURRENT_DOCKER_PATH" ]]; then
-    LOG "Путь совпадает ($DOCKER_PATH). Изменения не нужны."
-    # Убеждаемся, что сервис включен в автозагрузку
-    systemctl enable docker
-    exit 0
+    LOG "Путь совпадает ($DOCKER_PATH). Перенос данных не требуется."
+    NEED_MOVE_DOCKER=false
 fi
+
+USE_EXTERNAL_STORAGE=true
+if [[ "$DOCKER_PATH" == "/var/lib/docker" ]]; then
+    USE_EXTERNAL_STORAGE=false
+fi
+
+if [[ "$USE_EXTERNAL_STORAGE" == "true" ]]; then
+    DATA_MOUNT=$(dirname "$DOCKER_PATH")
+    CONTAINERD_TARGET="$DATA_MOUNT/var/lib/containerd"
+    ETC_DOCKER_TARGET="$DATA_MOUNT/etc/docker"
+else
+    CONTAINERD_TARGET="/var/lib/containerd"
+    ETC_DOCKER_TARGET="/etc/docker"
+fi
+
+LOG "Каталог containerd будет: $CONTAINERD_TARGET"
+LOG "Каталог конфигурации Docker будет: $ETC_DOCKER_TARGET"
+
+ensure_link() {
+    local link_path="$1"
+    local target_path="$2"
+
+    mkdir -p "$target_path"
+
+    if [ -L "$link_path" ]; then
+        local resolved
+        resolved=$(readlink -f "$link_path" || true)
+        if [[ "$resolved" == "$target_path" ]]; then
+            return 0
+        fi
+        rm -f "$link_path"
+    elif [ -e "$link_path" ]; then
+        local backup_path="${link_path}.bak.$(date +%s)"
+        rsync -a "$link_path/" "$target_path/"
+        mv "$link_path" "$backup_path"
+        LOG "Сохранена резервная копия $link_path в $backup_path"
+    fi
+
+    ln -s "$target_path" "$link_path"
+}
+
+LOG "Шаг 5.5: Проверки системы и выбранного раздела..."
+require_cmd df
+require_cmd rsync
+
+DOCKER_MOUNT=$(get_mount_point "$DOCKER_PATH")
+if [[ -z "$DOCKER_MOUNT" ]]; then
+    ERR "Не удалось определить точку монтирования для $DOCKER_PATH"
+fi
+
+LOG "Точка монтирования выбранного пути: $DOCKER_MOUNT"
+
+if [[ "$USE_EXTERNAL_STORAGE" == "true" && "$DOCKER_MOUNT" == "/" ]]; then
+    ERR "Выбранный путь $DOCKER_PATH находится на rootfs (/). Нужен большой раздел (например, /mnt/data)."
+fi
+
+check_space_and_inodes "$DOCKER_PATH"
+check_writable_dir "$(dirname "$DOCKER_PATH")"
 
 LOG "Шаг 6: Настройка и перенос в '$DOCKER_PATH'..."
 
 mkdir -p "$(dirname "$DOCKER_PATH")"
-mkdir -p /etc/docker
+
+LOG "Остановка Docker..."
+systemctl stop docker || true
+systemctl stop containerd || true
+
+if [[ "$USE_EXTERNAL_STORAGE" == "true" ]]; then
+    LOG "Настройка путей Docker и containerd на $DATA_MOUNT (рекомендации WB)..."
+    ensure_link "/etc/docker" "$ETC_DOCKER_TARGET"
+    ensure_link "/var/lib/containerd" "$CONTAINERD_TARGET"
+else
+    mkdir -p /etc/docker /var/lib/containerd
+fi
+
+LOG "Конфигурация Docker будет записана в /etc/docker/daemon.json"
 
 # --- ИСПРАВЛЕНИЕ 3: Защита контроллера от переполнения логами ---
 LOG "Применяю настройки ротации логов (защита от переполнения диска)..."
 cat <<EOF > /etc/docker/daemon.json
 {
-  "data-root": "$DOCKER_PATH",
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "10m",
-    "max-file": "3"
-  }
+    "data-root": "$DOCKER_PATH",
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "10m",
+        "max-file": "3"
+    }
 }
 EOF
 
-LOG "Остановка Docker..."
-systemctl stop docker || true
-
 LOG "Перенос данных (rsync)..."
 mkdir -p "$DOCKER_PATH"
-rsync -a --info=progress2 "$CURRENT_DOCKER_PATH/" "$DOCKER_PATH/"
+if [[ "$NEED_MOVE_DOCKER" == "true" ]]; then
+    rsync -a --info=progress2 "$CURRENT_DOCKER_PATH/" "$DOCKER_PATH/"
+fi
 
 LOG "Запуск Docker..."
+systemctl start containerd
 systemctl start docker
 systemctl enable docker
+
+if ! systemctl is-active --quiet containerd; then
+    WARN "containerd не активен. Проверьте: systemctl status containerd"
+fi
+if ! systemctl is-active --quiet docker; then
+    WARN "docker не активен. Проверьте: systemctl status docker"
+fi
 
 LOG "Шаг 7: Проверка..."
 sleep 3
 NEW_DOCKER_PATH=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo "Error")
+CONTAINERD_PATH=$(readlink -f /var/lib/containerd 2>/dev/null || echo "/var/lib/containerd")
+ETC_DOCKER_PATH=$(readlink -f /etc/docker 2>/dev/null || echo "/etc/docker")
+LOG "containerd dir: $CONTAINERD_PATH"
+LOG "docker config dir: $ETC_DOCKER_PATH"
 
 if [[ "$NEW_DOCKER_PATH" == "$DOCKER_PATH" ]]; then
     LOG "🎉 Успех! Новый путь: $NEW_DOCKER_PATH"
     LOG "Версия Docker: $(docker --version)"
-    LOG "Старую папку '$CURRENT_DOCKER_PATH' можно удалить вручную."
+    DOCKER_OK=true
+    if ! docker info >/dev/null 2>&1; then
+        DOCKER_OK=false
+        WARN "docker info не сработал. Пропускаю удаление старой папки."
+    fi
+
+    if [[ "${RUN_DOCKER_TEST:-0}" == "1" ]]; then
+        LOG "Тест: docker run hello-world"
+        if ! docker run --rm hello-world; then
+            DOCKER_OK=false
+            WARN "Тест hello-world не прошёл. Пропускаю удаление старой папки."
+        fi
+    fi
+
+    if [[ "$DOCKER_OK" == "true" ]]; then
+        if [[ "$CURRENT_DOCKER_PATH" != "$DOCKER_PATH" && -d "$CURRENT_DOCKER_PATH" ]]; then
+            LOG "Можно удалить старую папку '$CURRENT_DOCKER_PATH' для освобождения места."
+            LOG "Удалить её сейчас? (y/N). Если нет ответа 3 минуты, напомню про ручную очистку."
+            if read -r -t 180 REPLY < /dev/tty; then
+                if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                    LOG "Удаляю '$CURRENT_DOCKER_PATH'..."
+                    rm -rf "$CURRENT_DOCKER_PATH"
+                    LOG "Старая папка удалена."
+                else
+                    LOG "Ок, пропускаю удаление. Старую папку можно удалить вручную."
+                fi
+            else
+                LOG "Время ожидания истекло. Новый Docker установлен, старую папку удалите вручную."
+            fi
+        else
+            LOG "Старую папку '$CURRENT_DOCKER_PATH' можно удалить вручную."
+        fi
+    fi
 else
     ERR "Ошибка! Путь не изменился: $NEW_DOCKER_PATH"
