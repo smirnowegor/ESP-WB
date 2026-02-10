@@ -1,0 +1,4 @@
+{
+  "git.trace": "verbose",
+  "git.logLevel": "debug"
+}
