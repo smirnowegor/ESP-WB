@@ -9,6 +9,13 @@ if [[ $EUID -ne 0 ]]; then
     ERR "Этот скрипт необходимо запускать от имени root."
 fi
 
+print_supported_boards() {
+    LOG "Скрипт рассчитан на контроллеры Wiren Board 6/7/8 (включая 8+), где используется Debian Linux и раздел /mnt/data для пользовательских данных."
+    LOG "Если у вас не Wiren Board или нет /mnt/data, выберите /var/lib/docker."
+}
+
+print_supported_boards
+
 require_cmd() {
     local cmd="$1"
     command -v "$cmd" >/dev/null 2>&1 || ERR "Не найдена команда '$cmd'. Установите пакет и повторите."
@@ -95,8 +102,8 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin d
 
 LOG "Шаг 5: Выбор диска для данных."
 
-# (Твой код выбора диска - он хороший, оставляем как есть)
-mapfile -t raw_opts < <(df -B1 | awk 'NR>1 && $4 > 1073741824 && $6 !~ "^/boot" {printf "%s (%0.1fG free)\n", $6, $4/1073741824}' | sort -k2 -hr)
+# Исключаем tmpfs/devtmpfs, чтобы не выбрать непостоянные разделы.
+mapfile -t raw_opts < <(df -T -B1 | awk 'NR>1 && $2 !~ /^(tmpfs|devtmpfs|squashfs|overlay)$/ && $4 > 1073741824 && $7 !~ "^/boot" {printf "%s (%0.1fG free)\n", $7, $4/1073741824}' | sort -k2 -hr)
 raw_opts+=("/var/lib/docker (Оставить по умолчанию)")
 
 if [ ${#raw_opts[@]} -le 1 ]; then
@@ -132,7 +139,12 @@ else
         DOCKER_PATH="/var/lib/docker"
     else
         MOUNT_POINT=$(echo "$sel_opt" | sed -E 's/ \([0-9.]+G free\)//; s/ \(Оставить по умолчанию\)//')
-        DOCKER_PATH="${MOUNT_POINT%/}/docker"
+        DOCKER_DATA_DIR="docker"
+        if [[ "$MOUNT_POINT" == "/mnt/data" ]]; then
+            # Рекомендация WB: хранить образы в /mnt/data/.docker
+            DOCKER_DATA_DIR=".docker"
+        fi
+        DOCKER_PATH="${MOUNT_POINT%/}/$DOCKER_DATA_DIR"
     fi
 fi
 
@@ -163,6 +175,30 @@ fi
 LOG "Каталог containerd будет: $CONTAINERD_TARGET"
 LOG "Каталог конфигурации Docker будет: $ETC_DOCKER_TARGET"
 
+cleanup_old_docker_data() {
+    local path="$1"
+    local label="$2"
+
+    if [[ -d "$path" && "$path" != "$DOCKER_PATH" ]]; then
+        LOG "Найдены остатки старой установки ($label): $path"
+        LOG "Удалить каталог? Это удалит контейнеры и образы в нем. (y/N)"
+        if [[ -e /dev/tty && -c /dev/tty ]]; then
+            if read -r -t 180 REPLY < /dev/tty; then
+                if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                    rm -rf "$path"
+                    LOG "Удалено: $path"
+                else
+                    LOG "Пропускаю удаление: $path"
+                fi
+            else
+                LOG "Время ожидания истекло. Пропускаю удаление: $path"
+            fi
+        else
+            LOG "Нет интерактивного ввода. Пропускаю удаление: $path"
+        fi
+    fi
+}
+
 ensure_link() {
     local link_path="$1"
     local target_path="$2"
@@ -190,7 +226,22 @@ LOG "Шаг 5.5: Проверки системы и выбранного раз�
 require_cmd df
 require_cmd rsync
 
+DOCKER_ACTIVE=false
+if systemctl is-active --quiet docker 2>/dev/null; then
+    DOCKER_ACTIVE=true
+fi
+
+if [[ "$DOCKER_ACTIVE" == "false" ]]; then
+    cleanup_old_docker_data "/var/lib/docker" "docker data-root"
+    cleanup_old_docker_data "/mnt/data/.docker" "WB data-root"
+    cleanup_old_docker_data "/mnt/data/docker" "legacy data-root"
+fi
+
 DOCKER_MOUNT=$(get_mount_point "$DOCKER_PATH")
+if [[ -z "$DOCKER_MOUNT" ]]; then
+    # Папка data-root может не существовать, определяем по родителю.
+    DOCKER_MOUNT=$(get_mount_point "$(dirname "$DOCKER_PATH")")
+fi
 if [[ -z "$DOCKER_MOUNT" ]]; then
     ERR "Не удалось определить точку монтирования для $DOCKER_PATH"
 fi
@@ -201,7 +252,11 @@ if [[ "$USE_EXTERNAL_STORAGE" == "true" && "$DOCKER_MOUNT" == "/" ]]; then
     ERR "Выбранный путь $DOCKER_PATH находится на rootfs (/). Нужен большой раздел (например, /mnt/data)."
 fi
 
-check_space_and_inodes "$DOCKER_PATH"
+SPACE_CHECK_PATH="$DOCKER_PATH"
+if [[ ! -e "$SPACE_CHECK_PATH" ]]; then
+    SPACE_CHECK_PATH="$(dirname "$DOCKER_PATH")"
+fi
+check_space_and_inodes "$SPACE_CHECK_PATH"
 check_writable_dir "$(dirname "$DOCKER_PATH")"
 
 LOG "Шаг 6: Настройка и перенос в '$DOCKER_PATH'..."
@@ -299,3 +354,4 @@ if [[ "$NEW_DOCKER_PATH" == "$DOCKER_PATH" ]]; then
     fi
 else
     ERR "Ошибка! Путь не изменился: $NEW_DOCKER_PATH"
+fi
