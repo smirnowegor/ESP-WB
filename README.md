@@ -1,84 +1,65 @@
 # ESP-WB — Wiren Board + ESPHome integration
 
-ESP-WB содержит готовые конфигурации, контейнерные сервисы и скрипты для интеграции устройств на базе ESP (ESPHome) с контроллерами Wiren Board и Home Assistant. Проект предназначен для быстрого развёртывания среды сборки ESPHome, адаптации счётчиков MAP12E и агрегирования многотарифного учёта энергии в Home Assistant / WB.
+## Что внутри (файлы и назначение)
 
-Ключевые цели:
-- Предоставить готовые конфигурации ESPHome для MAP12E (Modbus).
-- Автоматизировать развёртывание контейнеров для ESPHome и Home Assistant на Wiren Board.
-- Скрипты для корректной установки Docker и работы с `/mnt/data` на WB.
+- `espWB_MAP12E.yaml` — основная ESPHome прошивка-конфигурация для интеграции MAP12E через UART/Modbus. Ключевые блоки:
+	- `esphome` / `name` / `build_path` — метаданные и путь сборки.
+	- `esp32` — целевая плата и фреймворк (ESP-IDF в проекте).
+	- `wifi`, `api`, `ota`, `logger`, `captive_portal` — стандартные сервисы ESPHome.
+	- `uart` / `modbus` / `modbus_controller` — настройка Modbus по UART (скорость 9600, паритет/стоп-биты) и адрес устройства MAP12E.
+	- `sensor` — большой набор Modbus-сенсоров: напряжения, токи, активная мощность и счётчики энергии; также присутствуют `template` сенсоры для тарифных корзин (T1..T4) с `state_class: total_increasing` для корректной работы в Home Assistant.
+	- `on_boot` — публикация восстановленных значений тарифных `template`-сенсоров после перезагрузки (восстановление сохранённых глобалов).
+	- Фильтры и `on_value`-обработчики (например, вызов `process_energy_update`) обеспечивают агрегацию/обработку значений при появлении новых показаний.
 
-Полезные ссылки
+	Этот файл — основной источник логики преобразования Modbus-регистров MAP12E в сущности Home Assistant и должен быть подстроен под вашу карту регистров (адреса и множители).
 
-- Telegram канал: https://t.me/u2smart4home
-- Дзен: https://dzen.ru/id/5e32d0969929ba40059b5892
-- YouTube: https://www.youtube.com/@udobni_dom
-- Статья проекта (подробная инструкция): https://teletype.in/@godisblind/F-3V9VCngZd
+- `espWB_MAP12E_noTariff.yaml` — облегчённый вариант прошивки без шаблонных тарифных сенсоров: оставляет только базовые Modbus-датчики и полезен, если тарифный расчёт выполняется на стороне WB/HA.
 
-Контакты
+- `espHomeWB.yaml` — пример сервиса/стековой конфигурации для запуска контейнера `esphome`:
+	- `setup_esphome` — одноразовый контейнер для создания директорий и выставления прав в `/mnt/data/udobnidom/esphome`.
+	- `esphome` — основной контейнер `ghcr.io/esphome/esphome:stable` с пробросом устройств `/dev`, `build`/`data`/`.platformio` на `/mnt/data` для сохранения кэша и сборок вне контейнера.
+	- Полезно для сборки прошивок, OTA и команд `esphome run` в изолированном окружении.
 
-Автор: Егор (smirnowegor). Для срочной связи: https://t.me/godisblind
+- `homeassistantWB.yaml` — пример запуска Home Assistant в контейнере:
+	- `setup_homeassistant` — подготовка директорий в `/mnt/data/udobnidom/homeassistant`.
+	- `homeassistant` — контейнер `homeassistant/home-assistant:latest` с монтированием конфигурации и сокета Docker (опционально), полезен для развёртывания HA на WB-хосте.
 
-Поддержка
+- `WB-MAP12Efw2_145_tarif.js` — скрипт правил для Wiren Board (Rules Engine):
+	- Создаёт виртуальные устройства `map12e_tariffs` (настройка тарифов) и `map12e_data` (агрегированные значения и управляющие поля).
+	- Реализует парсинг временных границ тарифов, валидацию последовательностей (функции `parseTimeHHMM`, `validateTimeRanges`).
+	- Функция `getTariffInfo` определяет текущий тариф по времени (1/2/3 тарифные схемы).
+	- Главный rule `map12e_data_aggregator` выполняется по cron и: читает суммарные значения с счётчика (`readChTotalAP`), вычисляет дельту, распределяет дельту по текущему тарифу, поддерживает ручной ввод (manual overwrite) и защиту от больших скачков.
+	- Инициализация устанавливает `chXX_last_total` и индикатор статуса; в скрипте есть fallback-логика при ошибках конфигурации.
+
+- `fastDockerWb.sh` — скрипт «всё-в-одном» для установки и настройки Docker/Containerd на Wiren Board:
+	- Удаляет конфликтующие пакеты, устанавливает зависимости, добавляет официальный репозиторий Docker.
+	- Позволяет выбрать целевой раздел (рекомендуется `/mnt/data`) и переносит данные (`rsync`) в новое `data-root`.
+	- Создаёт символьные ссылки при необходимости, настраивает `/etc/docker/daemon.json` с ограничениями логов (`max-size`, `max-file`) и перезапускает сервисы.
+	- Содержит проверки прав, свободного места, inode, и interactive-подтверждения при удалении старых данных.
+
+- `fastPortainerWB.sh`, `fastZ2MWB.sh`, `duplicatiFastWB.sh` — вспомогательные скрипты развертывания Portainer, Zigbee2MQTT и Duplicati соответственно; используют подходы работы с `/mnt/data` и настройкой контейнеров под WB.
+
+- `wudWB.yaml` — docker-compose snippet для запуска WUD (Watchdog/Updater Dashboard):
+	- Экспонирует UI на порту 3006, настраивает интеграцию через MQTT (`WUD_TRIGGER_MQTT_MOSQUITTO_URL`) и подключение к Docker через сокет.
+
+- `WB-MDM3/` — вспомогательная директория с ресурсами и прошивками (проверьте содержимое для деталей).
+
+---
+
+## Контакты и поддержка
+
+Автор: Егор (smirnowegor). Для связи и срочных вопросов используйте Telegram: https://t.me/godisblind
+
+Поддержка / донаты:
 
 - https://dzen.ru/id/5e32d0969929ba40059b5892?donate=true
 - https://donate.stream/yoomoney410013774736621
 
 ---
 
-## Что внутри (файлы и назначение)
+Если нужно, сейчас могу:
+- Прописать детальный «Разбор `espWB_MAP12E.yaml` по блокам» со списком регистров и пояснениями (с учётом содержимого файла);
+- Сгенерировать единый `docker-compose.yml`, объединяющий `espHomeWB.yaml`, `homeassistantWB.yaml` и `wudWB.yaml` в одну сеть и с общими volume;
+- Подготовить PR с изменениями README.
 
-- `espWB_MAP12E.yaml` — основная ESPHome конфигурация для MAP12E (powermeter). Описывает UART/Modbus подключение, набор Modbus-сенсоров, шаблонные сенсоры тарифов, on_boot и логику публикации значений. См. [espWB_MAP12E.yaml](espWB_MAP12E.yaml).
-- `espWB_MAP12E_noTariff.yaml` — вариант конфигурации для случая без многотарифного учёта (без шаблонных тарифных сенсоров). См. [espWB_MAP12E_noTariff.yaml](espWB_MAP12E_noTariff.yaml).
-- `espHomeWB.yaml` — docker-compose / service snippet для развёртывания контейнера ESPHome с данными и сборкой на `/mnt/data/udobnidom/esphome`. Используется для локального сборочного окружения и OTA. См. [espHomeWB.yaml](espHomeWB.yaml).
-- `homeassistantWB.yaml` — docker-compose / service snippet для развёртывания Home Assistant с монтированием конфигурации в `/mnt/data/udobnidom/homeassistant`. См. [homeassistantWB.yaml](homeassistantWB.yaml).
-- `MatterWB.yaml` — шаблон / вспомогательная конфигурация для Matter (при наличии устройств). См. [MatterWB.yaml](MatterWB.yaml).
-- `WB-MAP12Efw2_145_tarif.js` — сценарий (WB rules) для Wiren Board, агрегирующий многотарифную энергию, распределяющий дельту между тарифами, поддерживающий ручной ввод и кнопку обновления тарифов. См. [WB-MAP12Efw2_145_tarif.js](WB-MAP12Efw2_145_tarif.js).
-- `WB-MDM3/` — папка с материалами/прошивками для других устройств/модулей (проверьте содержимое при необходимости). См. [WB-MDM3](WB-MDM3).
-- `fastDockerWb.sh` — скрипт установки и настройки Docker на Wiren Board. Включает проверку разделов, перенос данных в `/mnt/data`, конфигурацию `daemon.json` и защиту от переполнения логов. См. [fastDockerWb.sh](fastDockerWb.sh).
-- `fastPortainerWB.sh`, `fastZ2MWB.sh`, `duplicatiFastWB.sh` — вспомогательные скрипты быстрого развёртывания Portainer, Zigbee2MQTT, Duplicati на WB.
-- `wudWB.yaml` — docker-compose snippet для запуска WUD (Watchdog/Updater Dashboard) с MQTT интеграцией. См. [wudWB.yaml](wudWB.yaml).
-
-Если нужно расширённое описание конкретного файла — могу вставить детальный разбор с ключевыми секциями и примерами (например, разобрать `espWB_MAP12E.yaml` по блокам: Modbus, шаблонные сенсоры, on_boot, фильтры и т.д.).
-
-## Быстрый старт
-
-1) Подготовка окружения на Wiren Board
-
-Если Docker ещё не настроен на WB, используйте `fastDockerWb.sh` (запуск от root):
-
-```bash
-sudo bash fastDockerWb.sh
-```
-
-2) Развёртывание ESPHome контейнера (локально на WB или на сервере)
-
-Скопируйте `espHomeWB.yaml` в ваш compose-проект или используйте как шаблон. После этого поместите `espWB_MAP12E.yaml` в каталог конфигурации ESPHome и соберите прошивку:
-
-```bash
-# пример для esphome cli
-esphome run espWB_MAP12E.yaml
-```
-
-3) Развёртывание Home Assistant
-
-Используйте `homeassistantWB.yaml` как шаблон для контейнера HA (монтирование в `/mnt/data/udobnidom/homeassistant`).
-
-4) Настройка Wiren Board rules
-
-Скопируйте `WB-MAP12Efw2_145_tarif.js` в правила WB (директория с rules) и создайте виртуальные устройства `map12e_tariffs` и `map12e_data` в панели WB. Проверьте соответствие имён контролов (meterDevice) с реальным идентификатором WB-устройства.
-
-## Рекомендации и примечания
-
-- `espWB_MAP12E.yaml` рассчитан на ESP32 с UART->Modbus и содержит шаблонные сенсоры для многотарифного учёта; внимательно проверьте `address` и `modbus_id` под вашу схему.
-- В `WB-MAP12Efw2_145_tarif.js` задаётся `meterDevice` — убедитесь, что имя устройства совпадает с реальным именем в WB.
-- Резервируйте `/mnt/data` для контейнеров и сборки ESPHome — на Wiren Board это рекомендуемая практика.
-- Перед использованием скриптов установки Docker сделайте резервную копию важных данных.
-
----
-
-Если хотите, я могу:
-- Добавить подробную секцию «Разбор `espWB_MAP12E.yaml` по блокам» с пояснениями и примерами значений;
-- Сгенерировать готовый `docker-compose.yml`, объединяющий все `*.yaml` сервисы под одной сетью и volume-монтажом;
-- Подготовить PR с коммитом README и изменениями.
-
-Скажите, что делаем дальше?
+Напишите, какой шаг делаем следующим.
