@@ -6,7 +6,7 @@ WARN() { echo -e "\e[1;33m[WARN]\e[0m $*"; }
 ERR()  { echo -e "\e[1;31m[ERROR]\e[0m $*" >&2; exit 1; }
 
 if [[ $EUID -ne 0 ]]; then
-    ERR "Этот скрипт необходимо запускать от имени root!!!"
+    ERR "Этот скрипт необходимо запускать от имени root."
 fi
 
 print_supported_boards() {
